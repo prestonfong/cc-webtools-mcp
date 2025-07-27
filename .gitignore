@@ -1,0 +1,9 @@
+# Build output
+build/
+dist/
+node_modules/
+*.tsbuildinfo
+
+# Temporary folders
+tmp/
+temp/

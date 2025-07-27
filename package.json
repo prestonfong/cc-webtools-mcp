@@ -1,0 +1,36 @@
+{
+  "name": "web-tools-mcp",
+  "version": "1.0.0",
+  "description": "TypeScript MCP server that replicates web_tool.py functionality using Claude CLI",
+  "main": "build/index.js",
+  "type": "module",
+  "bin": {
+    "web-tools-mcp": "build/index.js"
+  },
+  "scripts": {
+    "build": "tsc && shx chmod +x build/*.js",
+    "prepare": "npm run build",
+    "dev": "tsc --watch",
+    "start": "node build/index.js"
+  },
+  "keywords": [
+    "mcp",
+    "web-search",
+    "web-fetch",
+    "claude-cli"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "shx": "^0.3.4"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
