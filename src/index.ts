@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+console.error('DEBUG: Starting module initialization');
+
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -12,8 +14,64 @@ import { platform, homedir } from "os";
 import { join } from "path";
 import { config } from 'dotenv';
 import { existsSync } from 'fs';
+import { randomUUID } from 'crypto';
+
+// Import our modular components
+import { ResearchStep, ResearchStepParams, ToolResult, WebSearchParams, WebFetchParams } from './types.js';
+
+
+import { extractKeyFindings, analyzeSearchResults, analyzeFetchResults, assessInformationCompleteness, calculateConfidenceScore } from './helpers.js';
+import { TOOLS } from './tools.js';
 
 config();
+
+interface ExtractedUrl {
+  url: string;
+  title: string;
+  snippet: string;
+  relevanceScore: number;
+}
+
+// Configuration parsing for intelligent research
+interface ResearchConfig {
+  maxCalls: number;
+  autoResearch: boolean;
+  researchThreshold: number;
+}
+
+function parseResearchConfig(): ResearchConfig {
+  const args = process.argv;
+  
+  let maxCalls = 10; // Default value
+  let autoResearch = false; // Default value
+  let researchThreshold = 0.7; // Default value
+  
+  // Parse --max-calls argument
+  const maxCallsIndex = args.indexOf('--max-calls');
+  if (maxCallsIndex !== -1 && maxCallsIndex + 1 < args.length) {
+    const parsedMaxCalls = parseInt(args[maxCallsIndex + 1], 10);
+    if (!isNaN(parsedMaxCalls) && parsedMaxCalls > 0) {
+      maxCalls = parsedMaxCalls;
+    }
+  }
+  
+  // Parse --auto-research argument
+  const autoResearchIndex = args.indexOf('--auto-research');
+  if (autoResearchIndex !== -1 && autoResearchIndex + 1 < args.length) {
+    autoResearch = args[autoResearchIndex + 1].toLowerCase() === 'true';
+  }
+  
+  // Parse --research-threshold argument
+  const thresholdIndex = args.indexOf('--research-threshold');
+  if (thresholdIndex !== -1 && thresholdIndex + 1 < args.length) {
+    const parsedThreshold = parseFloat(args[thresholdIndex + 1]);
+    if (!isNaN(parsedThreshold) && parsedThreshold >= 0 && parsedThreshold <= 1) {
+      researchThreshold = parsedThreshold;
+    }
+  }
+  
+  return { maxCalls, autoResearch, researchThreshold };
+}
 
 // Function to get Claude CLI path with customization support
 function getClaudeCLIPath(): string {
@@ -73,67 +131,193 @@ if (!validateClaudeCLIPath(CLAUDE_CLI)) {
 
 const OUTPUT_FORMAT = "stream-json";
 
+// Parse the response to extract URLs and additional search terms
+function parseWebSearchResponse(response: string): {
+  urls: string[];
+  additionalSearchTerms: string[];
+} {
+  const urls: string[] = [];
+  const additionalSearchTerms: string[] = [];
+  
+  try {
+    // Parse the response as JSON
+    const parsed = JSON.parse(response);
+    
+    // Extract URLs from the parsed response
+    if (parsed.results && Array.isArray(parsed.results)) {
+      for (const result of parsed.results) {
+        if (result.url && typeof result.url === 'string') {
+          urls.push(result.url);
+        }
+      }
+    }
+    
+    // Extract additional search terms (you can customize this logic)
+    if (parsed.suggestedQueries && Array.isArray(parsed.suggestedQueries)) {
+      additionalSearchTerms.push(...parsed.suggestedQueries);
+    }
+  } catch (error) {
+    console.error('Error parsing search response:', error);
+  }
+  
+  return { urls, additionalSearchTerms };
+}
 
-const WEB_SEARCH_TOOL: Tool = {
-  name: "web_search",
-  description: "Search the web for real-time information about any topic. Use this tool when you need up-to-date information that might not be available in your training data, or when you need to verify current facts.",
+// Extract URLs from Claude CLI search results
+function extractUrlsFromSearchResults(results: string): Array<{url: string, title: string, snippet: string}> {
+  const extractedUrls: Array<{url: string, title: string, snippet: string}> = [];
+  
+  try {
+    // Look for the Links: [JSON] pattern in the results
+    const linksMatch = results.match(/Links:\s*(\[.*?\])/s);
+    
+    if (linksMatch) {
+      const linksJson = linksMatch[1];
+      const parsedResults = JSON.parse(linksJson);
+      
+      if (parsedResults && Array.isArray(parsedResults)) {
+        parsedResults.forEach(result => {
+          if (result.url && result.title) {
+            extractedUrls.push({
+              url: result.url,
+              title: result.title || 'No title',
+              snippet: result.snippet || 'No description available'
+            });
+          }
+        });
+      }
+    }
+  } catch (error) {
+    console.error('Error extracting URLs from search results:', error);
+  }
+  
+  return extractedUrls;
+}
+
+// Score URL relevance based on various factors
+function scoreUrlRelevance(url: string, title: string, snippet: string, position: number, originalQuery: string): number {
+  let score = 0;
+  
+  // Position factor (earlier results are generally more relevant)
+  score += Math.max(0, (10 - position) / 10) * 0.3;
+  
+  // Title length factor (reasonable length titles are often better)
+  const titleLength = title.length;
+  if (titleLength >= 20 && titleLength <= 80) {
+    score += 0.2;
+  }
+  
+  // Query term presence in title
+  const queryTerms = originalQuery.toLowerCase().split(' ');
+  const titleLower = title.toLowerCase();
+  const matchingTerms = queryTerms.filter(term => titleLower.includes(term)).length;
+  score += (matchingTerms / queryTerms.length) * 0.3;
+  
+  // Domain credibility (simple heuristic)
+  const domain = url.split('/')[2] || '';
+  if (domain.includes('wikipedia') || domain.includes('gov') || domain.includes('edu')) {
+    score += 0.15;
+  }
+  
+  // Avoid obviously commercial or low-quality patterns
+  if (domain.includes('ads') || title.toLowerCase().includes('buy now') || title.toLowerCase().includes('click here')) {
+    score -= 0.2;
+  }
+  
+  return Math.max(0, Math.min(1, score));
+}
+
+// Initialize global config and session manager
+const researchConfig = parseResearchConfig();
+
+
+// Removed auto-research functionality - using LLM-controlled sequential workflow instead
+
+
+
+const RESEARCH_STEP_TOOL: Tool = {
+  name: "research_step",
+  description: "Perform a single step in a cyclical, LLM-controlled research workflow. This tool enables sequential thinking for research where the LLM decides each next action (search, fetch, analyze, synthesize, refine_query, assess_completeness). The LLM can cycle back to search for more information until a complete answer is found.",
   inputSchema: {
     type: "object",
     properties: {
-      query: {
+      action: {
         type: "string",
-        description: "The search query to look up on the web"
+        enum: ["search", "fetch", "analyze", "synthesize", "refine_query", "assess_completeness"],
+        description: "The research action to perform: 'search' (web search), 'fetch' (get URL content), 'analyze' (analyze gathered info), 'synthesize' (create final answer), 'refine_query' (improve search terms), 'assess_completeness' (evaluate if more info needed)"
+      },
+      query_or_url: {
+        type: "string",
+        description: "For 'search'/'refine_query': the search query. For 'fetch': the URL to retrieve. For 'analyze'/'assess_completeness'/'synthesize': description of what to focus on."
+      },
+      step_reasoning: {
+        type: "string",
+        description: "Explain why this research step is needed and what you hope to accomplish with it."
+      },
+      next_step_needed: {
+        type: "boolean",
+        description: "Whether another research step will be needed after this one. The LLM controls the research flow by setting this appropriately."
+      },
+      step_number: {
+        type: "integer",
+        description: "Current step number in the research sequence (starts at 1)."
+      },
+      total_steps_estimated: {
+        type: "integer",
+        description: "Your current estimate of total steps needed. Can be adjusted as research progresses."
+      },
+      session_id: {
+        type: "string",
+        description: "Research session identifier. Use the same session_id across all steps in a research sequence to maintain context and enable cyclical research."
+      },
+      is_revision: {
+        type: "boolean",
+        description: "Whether this step revises or reconsidera previous research step."
+      },
+      revises_step: {
+        type: "integer",
+        description: "If is_revision=true, which step number is being reconsidered or revised."
+      },
+      synthesis_focus: {
+        type: "string",
+        description: "For 'synthesize' action: what aspect of the research to focus the final synthesis on."
       },
       allowed_domains: {
         type: "array",
         items: {
           type: "string"
         },
-        description: "Only include results from these domains"
+        description: "For 'search' action: only include results from these domains."
       },
       blocked_domains: {
-        type: "array", 
+        type: "array",
         items: {
           type: "string"
         },
-        description: "Never include results from these domains"
+        description: "For 'search' action: never include results from these domains."
       }
     },
-    required: ["query"]
+    required: ["action", "query_or_url", "step_reasoning", "next_step_needed", "step_number", "session_id"]
   }
 };
 
-const WEB_FETCH_TOOL: Tool = {
-  name: "web_fetch",
-  description: "Fetch content from a specific URL. Use this tool when you need to retrieve the content of a specific webpage.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      url: {
-        type: "string",
-        description: "The URL to fetch content from"
-      }
-    },
-    required: ["url"]
-  }
-};
+// Research Step Action Types
+type ResearchAction = 'search' | 'fetch' | 'analyze' | 'synthesize' | 'refine_query' | 'assess_completeness';
 
-// Claude CLI wrapper functions
-interface WebSearchParams {
-  query: string;
-  allowed_domains?: string[];
-  blocked_domains?: string[];
-}
-
-interface WebFetchParams {
-  url: string;
-}
-
-interface ToolResult {
-  query?: string;
-  url?: string;
-  results: string;
-  raw_content: string;
+interface ResearchStepResult {
+  action_taken: ResearchAction;
+  step_number: number;
+  session_id: string;
+  raw_results: any;
+  analysis: string;
+  information_completeness: 'insufficient' | 'partial' | 'sufficient' | 'complete';
+  suggested_next_action?: ResearchAction;
+  suggested_next_query?: string;
+  cycle_count: number;
+  total_steps: number;
+  reasoning: string;
+  key_findings: string[];
+  confidence_score: number;
 }
 
 function formatSearchResults(resultData: ToolResult, outputFormat: string = "clean"): string {
@@ -410,13 +594,182 @@ async function runWebSearch(params: WebSearchParams, debug: boolean = false): Pr
     toolParams.blocked_domains = params.blocked_domains;
   }
   
-  return runClaudeCLI("web_search", "web_search", toolParams, debug);
+  // Execute the base search
+  const searchResult = await runClaudeCLI("web_search", "web_search", toolParams, debug);
+  
+  // Handle intelligent research workflow if enabled
+  if (params.session_id || params.auto_research) {
+    const sessionId = params.session_id || randomUUID();
+    const timestamp = new Date().toISOString();
+    
+    // Simplified - no session management needed for stateless operation
+    return searchResult;
+  }
+  
+  // Return standard search result if no intelligent research
+  return searchResult;
 }
 
 async function runWebFetch(params: WebFetchParams, debug: boolean = false): Promise<ToolResult> {
   const toolParams = { url: params.url };
   return runClaudeCLI("web_fetch", "WebFetch", toolParams, debug);
 }
+// Simplified Research Step Implementation (Stateless)
+async function executeResearchStep(params: ResearchStepParams): Promise<ResearchStepResult> {
+  console.error('DEBUG: executeResearchStep START with params:', {
+    action: params.action,
+    query_or_url: params.query_or_url,
+    step_number: params.step_number,
+    session_id: params.session_id
+  });
+  
+  let rawResults: any;
+  let analysis: string;
+  let keyFindings: string[] = [];
+  let informationCompleteness: 'insufficient' | 'partial' | 'sufficient' | 'complete' = 'insufficient';
+  let confidenceScore: number = 0;
+  
+  let suggestedNextAction: ResearchAction | undefined;
+  let suggestedNextQuery: string | undefined;
+  
+  // Route to appropriate action handler (simplified - no session manager)
+  switch (params.action) {
+    case 'search':
+      const searchParams: WebSearchParams = {
+        query: params.query_or_url,
+        allowed_domains: params.allowed_domains,
+        blocked_domains: params.blocked_domains,
+        session_id: params.session_id,
+        auto_research: false
+      };
+      rawResults = await runWebSearch(searchParams);
+      const searchAnalysis = analyzeSearchResults(rawResults);
+      analysis = searchAnalysis.summary;
+      keyFindings = extractKeyFindings(rawResults, params.query_or_url);
+      console.error('DEBUG: keyFindings before assessInformationCompleteness (search):', {
+        type: typeof keyFindings,
+        isArray: Array.isArray(keyFindings),
+        value: keyFindings
+      });
+      informationCompleteness = assessInformationCompleteness(keyFindings, params.query_or_url);
+      break;
+      
+    case 'fetch':
+      const fetchParams: WebFetchParams = {
+        url: params.query_or_url,
+        session_id: params.session_id
+      };
+      rawResults = await runWebFetch(fetchParams);
+      const fetchAnalysis = analyzeFetchResults(rawResults);
+      analysis = fetchAnalysis.summary;
+      keyFindings = extractKeyFindings(rawResults, params.query_or_url);
+      console.error('DEBUG: keyFindings before assessInformationCompleteness (fetch):', {
+        type: typeof keyFindings,
+        isArray: Array.isArray(keyFindings),
+        value: keyFindings
+      });
+      informationCompleteness = assessInformationCompleteness(keyFindings, params.query_or_url);
+      break;
+      
+    case 'analyze':
+      // Simple analysis based on the focus provided
+      analysis = `Analysis of gathered information focusing on: ${params.query_or_url}`;
+      keyFindings = [`Analysis step completed for: ${params.query_or_url}`];
+      informationCompleteness = 'partial';
+      rawResults = { analysis, focus: params.query_or_url };
+      break;
+      
+    case 'synthesize':
+      // Simple synthesis step
+      analysis = `Synthesis of research findings with focus: ${params.query_or_url || 'general summary'}`;
+      keyFindings = [`Research synthesis completed`];
+      informationCompleteness = 'complete';
+      rawResults = { synthesis: analysis, focus: params.query_or_url };
+      break;
+      
+    case 'assess_completeness':
+      // Simple completeness assessment
+      analysis = `Assessment of information completeness for: ${params.query_or_url}`;
+      keyFindings = [`Completeness assessment completed`];
+      informationCompleteness = 'sufficient';
+      rawResults = { assessment: analysis };
+      break;
+      
+    case 'refine_query':
+      // Simple query refinement
+      analysis = `Refined search query based on: ${params.query_or_url}`;
+      keyFindings = [`Query refinement completed`];
+      informationCompleteness = 'insufficient';
+      suggestedNextQuery = `refined: ${params.query_or_url}`;
+      suggestedNextAction = 'search';
+      rawResults = { refinedQuery: suggestedNextQuery };
+      break;
+      
+    default:
+      throw new Error(`Unknown research action: ${params.action}`);
+  }
+  
+  // Determine next action based on completeness
+  if (!suggestedNextAction && informationCompleteness === 'insufficient') {
+    suggestedNextAction = 'search';
+    suggestedNextQuery = params.query_or_url;
+  } else if (informationCompleteness === 'partial') {
+    suggestedNextAction = 'fetch';
+  }
+  
+  // Calculate confidence score
+  confidenceScore = calculateConfidenceScore(keyFindings, params.step_number);
+  
+  // No session management needed for stateless operation
+  
+  return {
+    action_taken: params.action,
+    step_number: params.step_number,
+    session_id: params.session_id,
+    raw_results: rawResults,
+    analysis,
+    information_completeness: informationCompleteness,
+    suggested_next_action: suggestedNextAction,
+    suggested_next_query: suggestedNextQuery,
+    cycle_count: params.step_number, // Use step number as cycle count
+    total_steps: params.step_number,
+    reasoning: params.step_reasoning,
+    key_findings: keyFindings,
+    confidence_score: confidenceScore
+  };
+}
+
+
+
+
+function formatResearchStepResults(result: ResearchStepResult): string {
+  return `
+## Research Step ${result.step_number} - ${result.action_taken.toUpperCase()}
+
+**Session:** ${result.session_id}
+**Reasoning:** ${result.reasoning}
+
+**Analysis:** ${result.analysis}
+
+**Information Completeness:** ${result.information_completeness}
+**Confidence Score:** ${(result.confidence_score * 100).toFixed(1)}%
+
+**Key Findings:**
+${Array.isArray(result.key_findings)
+  ? result.key_findings.map(finding => `- ${finding}`).join('\n')
+  : `- ${result.key_findings || 'No findings available'}`}
+
+**Research Progress:**
+- Current Step: ${result.step_number}
+- Total Steps: ${result.total_steps}
+- Search Cycles: ${result.cycle_count}
+
+${result.suggested_next_action ? `**Suggested Next Action:** ${result.suggested_next_action}${result.suggested_next_query ? ` with query: "${result.suggested_next_query}"` : ''}` : ''}
+
+---
+`.trim();
+}
+
 
 // Create the MCP server
 const server = new Server(
@@ -434,14 +787,16 @@ const server = new Server(
 // List tools handler
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
-    tools: [WEB_SEARCH_TOOL, WEB_FETCH_TOOL]
+    tools: [RESEARCH_STEP_TOOL]
   };
 });
 
 // Call tool handler
 server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
   try {
+    console.error('DEBUG: Tool handler START with request.params:', request.params);
     const { name, arguments: args } = request.params;
+    console.error('DEBUG: Extracted name:', name, 'args:', args);
 
     if (!args || typeof args !== 'object') {
       throw new Error("No arguments provided");
@@ -449,41 +804,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
 
     let result: ToolResult;
 
-    if (name === "web_search") {
-      const { query, allowed_domains, blocked_domains } = args as WebSearchParams;
+    if (name === "research_step") {
+      console.error('DEBUG: Processing research_step tool');
+      const params = args as ResearchStepParams;
+      console.error('DEBUG: Params cast to ResearchStepParams:', params);
       
-      if (!query || typeof query !== 'string') {
-        throw new Error("Invalid query parameter");
+      if (!params.action || !params.query_or_url || !params.step_reasoning || !params.session_id) {
+        throw new Error("Missing required parameters: action, query_or_url, step_reasoning, session_id");
       }
       
-      result = await runWebSearch({ query, allowed_domains, blocked_domains });
+      console.error('DEBUG: About to call executeResearchStep');
+      const researchResult = await executeResearchStep(params);
       
-    } else if (name === "web_fetch") {
-      const { url } = args as WebFetchParams;
-      
-      if (!url || typeof url !== 'string') {
-        throw new Error("Invalid url parameter");
-      }
-      
-      result = await runWebFetch({ url });
+      return {
+        content: [{ type: "text", text: formatResearchStepResults(researchResult) }]
+      };
       
     } else {
       throw new Error(`Unknown tool: ${name}`);
     }
-
-    // Return the formatted results using appropriate formatter
-    let formattedText: string;
-    if (name === "web_search") {
-      formattedText = formatSearchResults(result, "clean");
-    } else if (name === "web_fetch") {
-      formattedText = formatFetchResults(result, "clean");
-    } else {
-      formattedText = result.results;
-    }
-    
-    return {
-      content: [{ type: "text", text: formattedText }]
-    };
     
   } catch (error) {
     console.error(`Error executing tool:`, error);

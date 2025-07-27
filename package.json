@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "description": "TypeScript MCP server that replicates web_tool.py functionality using Claude CLI",
   "main": "build/index.js",
-  "type": "module",
   "bin": {
     "web-tools-mcp": "build/index.js"
   },
