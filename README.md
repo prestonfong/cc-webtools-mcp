@@ -1,14 +1,12 @@
 # Web Tools MCP Server
 
-A TypeScript MCP (Model Context Protocol) server that provides web search and content fetching capabilities through Claude CLI integration.
+A TypeScript MCP (Model Context Protocol) server that provides web search and intelligent research capabilities through Claude CLI integration.
 
 ## Features
 
-- **web_search**: Search the web for real-time information with domain filtering support
+- **research_agent**: Intelligent research agent that answers questions by searching and analyzing web sources
+- **web_search**: Search the web for real-time information with domain filtering support  
 - **web_fetch**: Fetch content from specific URLs
-- **Intelligent Research Workflows**: Autonomous research capabilities with automatic URL extraction and fetching
-- **Session Management**: Persistent research state tracking across multiple tool calls
-- **Configurable Research Limits**: Control research depth with maxCalls and completeness thresholds
 - Uses Claude CLI backend for actual web operations
 - Full TypeScript implementation with proper error handling
 - Compatible with Claude Desktop and other MCP clients
@@ -62,52 +60,31 @@ If you need to specify a custom Claude CLI path:
 }
 ```
 
-### Intelligent Research Configuration
-
-Enable autonomous research workflows with configurable parameters:
-
-```json
-{
-  "mcpServers": {
-    "web-tools": {
-      "command": "web-tools-mcp",
-      "args": [
-        "--max-calls", "15",
-        "--auto-research", "true",
-        "--research-threshold", "0.8"
-      ]
-    }
-  }
-}
-```
-
-**Configuration Parameters:**
-- `--max-calls`: Maximum number of tool calls per research session (default: 10)
-- `--auto-research`: Enable automatic URL fetching and research continuation (default: false)
-- `--research-threshold`: Completeness score threshold for stopping research (0.0-1.0, default: 0.7)
-- `--claude-cli-path`: Custom path to Claude CLI executable
-
-**Common Claude CLI Paths:**
-- Windows NPM Global: `C:\\Users\\USERNAME\\AppData\\Roaming\\npm\\claude.cmd`
-- macOS/Linux: Usually just `claude` if installed globally
-
 ## Tool Usage
 
+### research_agent
+Intelligent research agent that automatically searches, fetches, and analyzes web sources to answer research questions.
+
+**Parameters:**
+- `objectives` (required): Array of research questions to answer
+- `starting_query` (required): Initial search query to begin research
+- `max_calls` (optional): Maximum research iterations (default: 5)
+- `allowed_domains` (optional): Array of domains to include in results
+- `blocked_domains` (optional): Array of domains to exclude from results
+
+**Features:**
+- Automatically searches the web and fetches top 3 most relevant sources
+- Extracts comprehensive quotes from web content
+- Continues research until objectives are met or max iterations reached
+- Provides organized results with source citations
+
 ### web_search
-Search the web for information with optional domain filtering and intelligent research capabilities.
+Search the web for information with optional domain filtering.
 
 **Parameters:**
 - `query` (required): The search query string
 - `allowed_domains` (optional): Array of domains to include in results
 - `blocked_domains` (optional): Array of domains to exclude from results
-- `session_id` (optional): Research session ID for continuing previous research
-- `auto_research` (optional): Enable automatic URL fetching and research continuation
-
-**Intelligent Research Features:**
-- Automatic URL extraction from search results
-- Relevance scoring and top URL auto-fetching
-- Session-based research state management
-- Completeness scoring and intelligent stopping conditions
 
 ### web_fetch
 Fetch and extract content from a specific URL.
@@ -115,72 +92,48 @@ Fetch and extract content from a specific URL.
 **Parameters:**
 - `url` (required): The URL to fetch content from
 
-## Intelligent Research Workflow
+## Usage Examples
 
-The web-tools-mcp server includes advanced autonomous research capabilities that can automatically:
-
-1. **Extract URLs** from search results using intelligent parsing
-2. **Score relevance** based on position, title quality, and query matching
-3. **Auto-fetch content** from the most promising URLs (top 3 with score ≥ 0.4)
-4. **Continue research** based on information completeness assessment
-5. **Track session state** across multiple research iterations
-
-### How It Works
-
-When `auto_research` is enabled, the server:
-
-1. Performs initial web search for your query
-2. Extracts and scores URLs from search results
-3. Automatically fetches content from top-ranked URLs
-4. Analyzes information completeness and diversity
-5. Decides whether to continue research or stop
-6. Maintains session state for research continuity
-
-### Research Session Management
-
-Each research session maintains:
-- **Session ID**: Unique identifier for tracking research state
-- **Query History**: Original query and research progression
-- **Cumulative Information**: All gathered content and insights
-- **Call Tracking**: Number of tool calls vs. configured maximum
-- **Completeness Score**: Heuristic assessment of information adequacy
-
-### Usage Examples
-
-**Basic Autonomous Research:**
+### Basic Research
 ```json
 {
-  "tool": "web_search",
+  "tool": "research_agent",
   "arguments": {
-    "query": "latest developments in quantum computing 2024",
-    "auto_research": true
+    "objectives": ["What is Claude AI and what are its main capabilities?"],
+    "starting_query": "Claude AI capabilities features"
   }
 }
 ```
 
-**Continuing Previous Research:**
+### Research with Domain Filtering
 ```json
 {
-  "tool": "web_search",
+  "tool": "research_agent", 
   "arguments": {
-    "query": "quantum computing applications in cryptography",
-    "session_id": "research_session_12345",
-    "auto_research": true
+    "objectives": ["Latest quantum computing breakthroughs in 2024"],
+    "starting_query": "quantum computing 2024 breakthroughs",
+    "allowed_domains": ["arxiv.org", "nature.com", "science.org"],
+    "max_calls": 3
   }
 }
 ```
 
-**Research with Domain Filtering:**
+### Basic Web Search
 ```json
 {
   "tool": "web_search",
   "arguments": {
-    "query": "machine learning breakthroughs",
-    "auto_research": true,
-    "allowed_domains": ["arxiv.org", "nature.com", "science.org"]
+    "query": "latest developments in quantum computing 2024"
   }
 }
 ```
+
+## How Research Agent Works
+
+1. **Search**: Performs web searches for the research objectives
+2. **Fetch**: Automatically retrieves content from the top 3 most relevant sources  
+3. **Analyze**: Extracts comprehensive quotes that answer research questions
+4. **Continue**: Iterates until objectives are met or max iterations reached
 
 ## Requirements
 
@@ -201,37 +154,6 @@ npm run build
 npm start
 ```
 
-## Research Algorithm Details
-
-### URL Extraction and Scoring
-
-The intelligent research system uses sophisticated algorithms to identify and prioritize content:
-
-**URL Extraction:**
-- Parses JSON search results from Claude CLI
-- Uses regex patterns to identify URLs in search content
-- Validates URL format and accessibility
-
-**Relevance Scoring Components:**
-- **Position Weight (30%)**: Earlier results scored higher
-- **Title Quality (20%)**: Length and descriptiveness assessment
-- **Query Matching (30%)**: Exact and partial term matching in titles/descriptions
-- **Domain Credibility (15%)**: Known authoritative domains get bonus points
-- **Content Length (5%)**: Substantial content preferred over snippets
-
-**Auto-Fetch Criteria:**
-- Top 3 URLs with relevance score ≥ 0.4
-- Excludes previously fetched URLs in the session
-- Respects domain filtering (allowed/blocked domains)
-
-### Completeness Assessment
-
-The system evaluates research completeness using:
-- **Information Volume**: Total content length and diversity
-- **Source Variety**: Number of unique domains and URL types
-- **Query Coverage**: How well gathered information addresses the original query
-- **Redundancy Detection**: Identifies when additional sources provide diminishing returns
-
 ## Troubleshooting
 
 ### Common Issues
@@ -240,15 +162,8 @@ The system evaluates research completeness using:
 ```
 Error: spawn claude ENOENT
 ```
-- Ensure Claude CLI is installed globally: `npm install -g @anthropic-ai/claude-3-cli`
+- Ensure Claude CLI is installed globally: `npm install -g @anthropic-ai/claude-cli`
 - Or specify custom path with `--claude-cli-path` argument
-
-**Research Session Errors:**
-```
-Error: Research session limit exceeded
-```
-- Increase `--max-calls` parameter (default: 10)
-- Check if research threshold is too low (default: 0.7)
 
 **No URLs Found in Search Results:**
 ```
@@ -267,12 +182,35 @@ DEBUG=web-tools-mcp npm start
 
 ## Architecture
 
-This server uses Node.js child_process to call Claude CLI with synthetic tool_use messages, parsing the stream-json output to extract results. The implementation maintains compatibility with the original Python web_tool.py functionality while providing a native TypeScript MCP server interface.
+This server uses Node.js child_process to call Claude CLI with synthetic tool_use messages, parsing the stream-json output to extract results. The implementation provides intelligent research capabilities with automated source selection and content analysis.
+
+### Optimized Codebase Structure
+
+The codebase has been optimized for maintainability and reduced footprint:
+
+```
+web-tools-mcp/src/
+├── index.ts              # MCP server entry point + tool schemas
+├── research-agent.ts     # Core research logic and workflows
+├── claude-cli.ts         # Unified Claude CLI interface
+├── helpers.ts            # Content processing + URL utilities
+├── logger.ts             # Logging + unified error handling
+├── domain-blocking.ts    # Domain management and error classification
+└── types.ts              # Type definitions
+```
 
 ### Key Components
 
-- **ResearchSessionManager**: Handles persistent research state and session tracking
-- **URL Extraction Engine**: Parses search results and identifies relevant URLs
-- **Relevance Scoring Algorithm**: Multi-factor scoring system for URL prioritization
-- **Completeness Assessment**: Heuristic evaluation of research adequacy
-- **Configuration Parser**: Command-line argument processing for research parameters
+- **Research Agent**: Automated research with objective-driven workflows
+- **Unified Claude CLI Interface**: Consolidated execution layer for all Claude operations
+- **Content Processing**: Enhanced content extraction with integrated URL utilities
+- **Smart Domain Management**: Handles domain filtering and error recovery with persistent blocking
+- **Unified Error Handling**: Centralized error management and logging utilities
+- **Source Citation**: Provides proper attribution for all extracted information
+
+### Recent Optimizations
+
+- **60%+ code reduction**: Eliminated duplicate Python implementation
+- **Consolidated functions**: Unified Claude CLI operations and utility functions
+- **Enhanced error handling**: Added reusable error management utilities
+- **Improved modularity**: Better separation of concerns with fewer files
